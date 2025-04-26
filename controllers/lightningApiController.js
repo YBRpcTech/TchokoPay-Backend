@@ -9,16 +9,27 @@ const API_KEY = '2259613c6d06bc42ea1962d7e5b35377'; // 🔐 Move this to .env la
 const createInvoice = async (req, res) => {
   try {
     const {
-      amount,
+      amount, // received in XAF
       amountCurrency,
       description,
       reference,
       expiresAt,
     } = req.body;
 
+    // ⚡️ Step 1: Convert XAF to SATS
+    const xafAmount = Number(amount); // ensure it's a number
+    const satoshiRate = 278; // 1 satoshi = 278 XAF
+    const amountInSats = xafAmount / satoshiRate;
+
+    // ⚡️ Step 2: Apply 5% charges
+    const finalAmountInSats = amountInSats * 1.05; // add 5% to the original
+
+    // ⚡️ Step 3: Ensure final amount is an integer (SATs are integers)
+    const finalAmountInSatsRounded = Math.ceil(finalAmountInSats); // use ceil to avoid underpayment
+
     const payload = {
-      amount: Number(amount),
-      amountCurrency,
+      amount: finalAmountInSatsRounded, // final satoshi amount after conversion & addition
+      amountCurrency: 'SATs',            // force sending SATs because conversion was done
       description,
       reference,
       expiresAt,
@@ -48,8 +59,8 @@ const createInvoice = async (req, res) => {
       invoiceReferenceId: invoiceData.invoiceReferenceId,
       reference: invoiceData.reference,
       description: invoiceData.description,
-      originalAmount: invoiceData.originalAmount || payload.amount,
-      amountCurrency: payload.amountCurrency,
+      originalAmount: xafAmount, // store the original XAF amount from frontend
+      amountCurrency: 'XAF', // storing it as XAF because that's what was paid
       feeDetails: {
         ejaraFee: invoiceData.feeDetails?.ejaraFee,
         partnerCommission: invoiceData.feeDetails?.partnerCommission,

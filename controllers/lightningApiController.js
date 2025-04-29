@@ -18,11 +18,11 @@ const createInvoice = async (req, res) => {
 
     // ⚡️ Step 1: Convert XAF to SATS
     const xafAmount = Number(amount); // ensure it's a number
-    const satoshiRate = 0.39; // 1 satoshi = 278 XAF
+    const satoshiRate = 0.29; // 1 satoshi = 278 XAF
     const amountInSats = xafAmount / satoshiRate;
 
     // ⚡️ Step 2: Apply 5% charges
-    const finalAmountInSats = amountInSats * 0.95; // keep 95% after cutting 5%
+    const finalAmountInSats = amountInSats; // keep 95% after cutting 5%
 
     // ⚡️ Step 3: Ensure final amount is an integer (SATs are integers)
     const finalAmountInSatsRounded = Math.floor(finalAmountInSats);

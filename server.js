@@ -8,6 +8,7 @@ dotenv.config();
 const app = express();
 app.use(express.json());
 
+
 // CORS setup to allow all origins and headers
 app.use(cors({
   origin: '*',
@@ -24,10 +25,11 @@ mongoose.connect(process.env.MONGO_URI)
 const paymentRoutes = require('./routes/invoiceRoutes');
 const invoiceRoutes = require('./routes/invoiceRoutes'); // ✅ add this line
 const momoRoutes = require('./routes/momoRoutes');
+const transactionRoutes = require('./routes/transactionRoutes');
 
 app.use('/api/payment', paymentRoutes);
-app.use('/api/invoice', invoiceRoutes); // ✅ register the invoice routes
-app.use('/api', momoRoutes);
+app.use('/api/momo', momoRoutes);
+app.use('/api/invoice', transactionRoutes);
 
 app.get("/", (req, res) => {
   res.send("BoltPay API is running...");

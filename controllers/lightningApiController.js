@@ -1,91 +1,183 @@
 const axios = require('axios');
+const Bitcoin = require('../models/Bitcoin');
 require('dotenv').config();
-const Invoice = require('../models/Invoice'); // ✅ Import your invoice model
 
-const API_BASE_URL = process.env.BTC_API_BASE_URL;
-const API_KEY = '2259613c6d06bc42ea1962d7e5b35377'; // 🔐 Move this to .env later
+const BTC_API_BASE_URL = process.env.BTC_API_BASE_URL;
+const BTC_API_KEY = process.env.BTC_API_KEY;
+const MOMO_API_KEY = "YI9n5YXd5hjasw-gXZscL";
+const MOMO_BASE_URL = 'https://api.pay.mynkwa.com';
 
-// CREATE INVOICE
-const createInvoice = async (req, res) => {
+const delay = (ms) => new Promise((res) => setTimeout(res, ms));
+const formatDate = (date) => date.toISOString().split('T')[0];
+
+// General function to make API requests
+const makeApiRequest = async (url, method, data) => {
   try {
-    const {
-      amount, // received in XAF
-      amountCurrency,
-      description,
-      reference,
-      expiresAt,
-    } = req.body;
+    console.log(`[API REQUEST] ${method} ${url} | Payload:`, data);
+    const response = await axios({
+      url: `${BASE_URL}${url}`,
+      method: method,
+      headers: {
+        "X-API-Key": API_KEY,
+        "Content-Type": "application/json",
+      },
+      data: data,
+    });
+    console.log(`[API RESPONSE] ${method} ${url} | Response:`, response.data);
+    return response.data;
+  } catch (error) {
+    console.error(
+      `[API ERROR] ${method} ${url} |`,
+      error.response?.data || error.message
+    );
+    throw new Error(
+      error.response ? JSON.stringify(error.response.data) : error.message
+    );
+  }
+};
+// 🔁 Create Lightning Invoice
+const createLightningInvoice = async ({ amount, description, reference }) => {
+  const xafAmount = Number(amount);
+  const amountInSats = Math.floor(xafAmount / 1); // assuming 1 XAF = 1 SAT
 
-    // ⚡️ Step 1: Convert XAF to SATS
-    const xafAmount = Number(amount); // ensure it's a number
-    const satoshiRate = 1.2; // 1 satoshi = 278 XAF
-    const amountInSats = xafAmount / satoshiRate;
+  const expiresAt = new Date();
+  expiresAt.setDate(expiresAt.getDate() + 7);
 
-    // ⚡️ Step 2: Apply 5% charges
-    const finalAmountInSats = amountInSats; // keep 95% after cutting 5%
+  const payload = {
+    amount: amountInSats,
+    amountCurrency: 'SATs',
+    description,
+    reference,
+    expiresAt: formatDate(expiresAt),
+  };
 
-    // ⚡️ Step 3: Ensure final amount is an integer (SATs are integers)
-    const finalAmountInSatsRounded = Math.floor(finalAmountInSats);
-
-    const payload = {
-      amount: finalAmountInSatsRounded,  // final satoshi amount after conversion & deduction
-      amountCurrency: 'SATs',             // force sending SATs because conversion was done
-      description,
-      reference,
-      expiresAt,
-    };
-
-    console.log("🔄 Creating Invoice...");
-    console.log("➡️ API Endpoint:", `${API_BASE_URL}/api/v1/invoices`);
-    console.log("📦 Payload:", JSON.stringify(payload, null, 2));
-    console.log("🔑 API Key Used:", API_KEY ? "Yes ✅" : "No ❌");
-
-    const config = {
+  const response = await axios.post(
+    `${BTC_API_BASE_URL}/api/v1/invoices`,
+    payload,
+    {
       headers: {
         'Content-Type': 'application/json',
         Accept: '*/*',
-        'x-api-key': API_KEY,
+        'x-api-key': BTC_API_KEY,
       },
-    };
+    }
+  );
 
-    const response = await axios.post(`${API_BASE_URL}/api/v1/invoices`, payload, config);
+  return response.data;
+};
 
-    console.log("✅ Invoice Created Successfully:", response.data);
+const pollInvoiceStatus = async (invoiceId) => {
+  const config = {
+    headers: {
+      'x-api-key': BTC_API_KEY,
+      Accept: '*/*',
+    },
+  };
 
-    // ✅ Save invoice to DB using the model
-    const invoiceData = response.data?.data;
+  const MAX_ATTEMPTS = 100;
+  const POLL_INTERVAL_MS = 5000;
 
-    const invoiceToSave = new Invoice({
-      invoiceReferenceId: invoiceData.invoiceReferenceId,
-      reference: invoiceData.reference,
-      description: invoiceData.description,
-      originalAmount: xafAmount, // store the original XAF amount from frontend
-      amountCurrency: 'XAF', // storing it as XAF because that's what was paid
-      feeDetails: {
-        ejaraFee: invoiceData.feeDetails?.ejaraFee,
-        partnerCommission: invoiceData.feeDetails?.partnerCommission,
-        totalFee: invoiceData.feeDetails?.totalFee,
-      },
-      totalAmountWithFees: invoiceData.totalAmountWithFees,
-      status: invoiceData.status,
-      invoiceHash: invoiceData.invoiceHash,
-      expiryDate: invoiceData.expiryDate,
-      btcEquivalentOfTokens: invoiceData.btcEquivalentOfTokens || invoiceData.btcEquivalent,
-      dateCreated: invoiceData.dateCreated || new Date(),
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    try {
+      const response = await axios.get(
+        `${BTC_API_BASE_URL}/api/v1/partners/invoices/${invoiceId}`,
+        config
+      );
+
+      const status = response.data?.data?.status;
+      console.log(`🔍 [Invoice Attempt ${attempt}] Invoice ${invoiceId} status: ${status}`);
+
+      if (status === 'completed') {
+        console.log(`✅ Invoice ${invoiceId} has been paid.`);
+
+        const invoice = await Bitcoin.findById(invoiceId);
+        if (!invoice) {
+          console.error(`⚠️ Invoice ${invoiceId} not found in DB`);
+          return;
+        }
+
+        const { amount, receiverNumber } = invoice.payloadReceived;
+
+        // ✅ Step 1: Initiate MoMo disbursement
+        console.log(`💸 Initiating MoMo disbursement to ${receiverNumber}`);
+        const disburseData = await makeApiRequest('/disburse', 'POST', {
+          amount,
+          phoneNumber: receiverNumber,
+        });
+
+        if (!disburseData?.id || disburseData.status !== 'pending') {
+          console.warn('❌ Disbursement initiation failed:', disburseData);
+          return;
+        }
+
+        // ✅ Step 2: Poll MoMo disbursement
+        for (let i = 1; i <= MAX_ATTEMPTS; i++) {
+          const disburseStatus = await makeApiRequest(`/payments/${disburseData.id}`, 'GET');
+          console.log(`💳 [Disburse Attempt ${i}] Status: ${disburseStatus.status}`);
+
+          if (disburseStatus.status === 'success') {
+            console.log('✅ BTC collected and successfully disbursed via MoMo.');
+            return;
+          }
+
+          await delay(POLL_INTERVAL_MS);
+        }
+
+        console.warn('⚠️ MoMo disbursement polling exceeded max attempts.');
+        return;
+
+      } else if (['failed', 'expired'].includes(status)) {
+        console.warn(`❌ Invoice ${invoiceId} status: ${status}`);
+        return;
+      }
+
+    } catch (error) {
+      console.error(`❗ Error polling invoice ${invoiceId}:`, error.message);
+    }
+
+    await delay(POLL_INTERVAL_MS);
+  }
+
+  console.warn(`🚫 Max polling attempts reached for invoice ${invoiceId}`);
+};
+
+
+
+// 🌐 External API: Create Invoice
+const createInvoice = async (req, res) => {
+  try {
+    const {
+      amount,
+      description,
+      payerMethod,
+      receiverMethod,
+      receiverNumber,
+      senderNumber,
+    } = req.body;
+
+    const reference = `TchokoPay-${description}`;
+    const invoice = await createLightningInvoice({ amount, description, reference });
+
+    const bitcoinData = new Bitcoin({
+      _id: invoice.data.invoiceReferenceId,
+      payloadReceived: req.body,
+      status: invoice.data.status,
+      invoiceHash: invoice.data.invoiceHash,
+      expiryDate: invoice.data.expiryDate,
+      amountInSats: invoice.data.originalAmount,
+      btcEquivalent: invoice.data.btcEquivalentOfTokens,
     });
 
-    await invoiceToSave.save();
-    console.log("💾 Invoice saved to DB");
+    await bitcoinData.save();
+
+    pollInvoiceStatus(invoice.data.invoiceReferenceId);
 
     res.status(201).json({
       message: 'Invoice created successfully',
-      data: response.data,
+      data: invoice,
     });
   } catch (error) {
-    console.error("❌ Error Creating Invoice:");
-    console.error("Status:", error.response?.status);
-    console.error("Response Data:", error.response?.data || error.message);
-
+    console.error('❌ Failed to create invoice:', error.message);
     res.status(500).json({
       message: 'Failed to create invoice',
       error: error.response?.data || error.message,
@@ -93,38 +185,57 @@ const createInvoice = async (req, res) => {
   }
 };
 
+// 🛠 Internal Service: Create Invoice From Transaction
+const createInvoiceFromTransaction = async (transaction) => {
+  try {
+    const { amount, description } = transaction;
+    const reference = `TchokoPay-${description}`;
+    const invoice = await createLightningInvoice({ amount, description, reference });
 
-// GET INVOICE STATUS
+    const bitcoinData = new Bitcoin({
+      _id: invoice.data.invoiceReferenceId,
+      payloadReceived: transaction,
+      status: invoice.data.status || 'pending',
+      invoiceHash: invoice.data.invoiceHash,
+      expiryDate: invoice.data.expiryDate,
+      amountInSats: invoice.data.originalAmount,
+      btcEquivalent: invoice.data.btcEquivalentOfTokens,
+    });
+
+    await bitcoinData.save();
+    pollInvoiceStatus(invoice.data.invoiceReferenceId);
+
+    return invoice;
+  } catch (error) {
+    console.error('❌ Error creating invoice from transaction:', error.message);
+    throw error;
+  }
+};
+
+// 🔍 API: Get Invoice Status
 const getInvoiceStatus = async (req, res) => {
   const { invoiceId } = req.params;
-
   try {
     const config = {
       headers: {
-        'x-api-key': API_KEY,
+        'x-api-key': BTC_API_KEY,
         Accept: '*/*',
       },
     };
 
-    console.log("🔍 Checking Invoice Status...");
-    console.log("🆔 Invoice ID:", invoiceId);
-    console.log("➡️ API Endpoint:", `${API_BASE_URL}/api/v1/partners/invoices/${invoiceId}`);
-
-    const response = await axios.get(`${API_BASE_URL}/api/v1/partners/invoices/${invoiceId}`, config);
-
-    console.log("✅ Invoice Status Retrieved:", response.data);
+    const response = await axios.get(
+      `${BTC_API_BASE_URL}/api/v1/partners/invoices/${invoiceId}`,
+      config
+    );
 
     res.status(200).json({
       message: 'Invoice status retrieved successfully',
       data: response.data,
     });
   } catch (error) {
-    console.error("❌ Error Fetching Invoice Status:");
-    console.error("Status:", error.response?.status);
-    console.error("Response Data:", error.response?.data || error.message);
-
+    console.error(`❌ Error getting invoice status:`, error.message);
     res.status(500).json({
-      message: 'Failed to retrieve invoice status',
+      message: 'Failed to get invoice status',
       error: error.response?.data || error.message,
     });
   }
@@ -133,4 +244,5 @@ const getInvoiceStatus = async (req, res) => {
 module.exports = {
   createInvoice,
   getInvoiceStatus,
+  createInvoiceFromTransaction,
 };

@@ -1,0 +1,8 @@
+POST http://localhost:4000/api/invoices/generate-from-qr
+Content-Type: application/json
+
+{
+  "payerName": "John Doe",
+  "payerEmail": "john.doe@example.com",
+  "amount": 250.75
+}

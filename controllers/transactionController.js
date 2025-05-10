@@ -1,6 +1,6 @@
 const Transaction = require('../models/Transaction');
 const Momo = require('../models/Momo');
-const LightningApiController = require('./LightningApiController');
+const LightningApiController = require('./lightningApiController');
 const MomoApiController = require('./MomoApiController');
 
 const createTransaction = async (req, res) => {

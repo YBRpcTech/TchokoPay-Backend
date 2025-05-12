@@ -15,10 +15,10 @@ const makeApiRequest = async (url, method, data) => {
   try {
     console.log(`[API REQUEST] ${method} ${url} | Payload:`, data);
     const response = await axios({
-      url: `${BASE_URL}${url}`,
+      url: `${MOMO_BASE_URL}${url}`,
       method: method,
       headers: {
-        "X-API-Key": API_KEY,
+        "X-API-Key": MOMO_API_KEY,
         "Content-Type": "application/json",
       },
       data: data,
